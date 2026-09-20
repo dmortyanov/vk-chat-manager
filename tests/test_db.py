@@ -22,6 +22,7 @@ os.environ["DATABASE_PATH"] = test_db_path
 from config import Role
 from database.db import init_db
 from database.repository import Repository
+from utils.permissions import can_moderate_target
 
 
 async def run_tests():
@@ -130,6 +131,20 @@ async def run_tests():
     all_chats = await Repository.get_all_chat_ids()
     assert peer_id in all_chats, "Созданная беседа должна присутствовать в списке всех чатов"
     print("✅ Получение списка бесед для рассылки: OK")
+
+    # 10. Тест проверки прав модерации (can_moderate_target с аргументом api)
+    can_self, _ = await can_moderate_target(peer_id, admin_id=moder_id, target_id=moder_id, api=None)
+    assert not can_self, "Нельзя применять модерацию к себе"
+
+    can_user_mod, _ = await can_moderate_target(peer_id, admin_id=user_id, target_id=moder_id, api=None)
+    assert not can_user_mod, "Обычный участник не может модерировать"
+
+    can_mod_owner, _ = await can_moderate_target(peer_id, admin_id=moder_id, target_id=owner_id, api=None)
+    assert not can_mod_owner, "Модератор не может наказывать владельца"
+
+    can_mod_user, _ = await can_moderate_target(peer_id, admin_id=moder_id, target_id=user_id, api=None)
+    assert can_mod_user, "Модератор должен иметь право наказывать обычного участника"
+    print("✅ Проверка прав can_moderate_target (с api=None и ролями): OK")
 
     print("\n🎉 Все тесты базы данных успешно пройдены!")
 

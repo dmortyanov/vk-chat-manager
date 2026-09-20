@@ -25,7 +25,12 @@ async def is_user_in_chat(peer_id: int, user_id: int, api) -> bool:
         return True
 
 
-async def can_moderate_target(peer_id: int, admin_id: int, target_id: int) -> Tuple[bool, str]:
+async def can_moderate_target(
+    peer_id: int,
+    admin_id: int,
+    target_id: int,
+    api=None
+) -> Tuple[bool, str]:
     """
     Проверяет, имеет ли администратор право применять модерационные действия к цели.
     Возвращает (разрешено_ли, сообщение_об_ошибке).
@@ -33,8 +38,14 @@ async def can_moderate_target(peer_id: int, admin_id: int, target_id: int) -> Tu
     if admin_id == target_id:
         return False, "❌ Вы не можете применить это действие к самому себе!"
 
-    admin_role = await Repository.get_member_role(peer_id, admin_id)
-    target_role = await Repository.get_member_role(peer_id, target_id)
+    # Проверка на то, что пользователь состоит в беседе
+    if api is not None:
+        in_chat = await is_user_in_chat(peer_id, target_id, api)
+        if not in_chat:
+            return False, "❌ Данного пользователя нет в этой беседе!"
+
+    admin_role = await check_user_role(peer_id, admin_id)
+    target_role = await check_user_role(peer_id, target_id)
 
     if admin_role < Role.MODERATOR:
         return False, "❌ У вас недостаточно прав для выполнения этой команды!"

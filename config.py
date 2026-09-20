@@ -1,4 +1,5 @@
 import os
+import re
 from enum import IntEnum
 from pathlib import Path
 from dotenv import load_dotenv
@@ -15,7 +16,7 @@ raw_prefixes = os.getenv("COMMAND_PREFIXES", "/")
 COMMAND_PREFIXES = tuple(p.strip() for p in raw_prefixes.split(",") if p.strip()) or ("/",)
 
 raw_dev_ids = os.getenv("DEV_IDS", "")
-DEV_IDS = tuple(int(x.strip()) for x in raw_dev_ids.split(",") if x.strip().isdigit())
+DEV_IDS = tuple(int(x) for x in re.findall(r"\d+", raw_dev_ids))
 
 
 class Role(IntEnum):
