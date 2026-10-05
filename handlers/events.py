@@ -13,20 +13,47 @@ logger = logging.getLogger(__name__)
 labeler = BotLabeler()
 
 
-async def send_bot_welcome_instruction(message: Message):
-    """Отправляет фото-инструкцию и памятку при добавлении бота в беседу"""
-    attachment = None
+_cached_instruction_attachment: str | None = None
 
-    # 1. Если задан готовый attachment в .env
-    if INSTRUCTION_PHOTO_ATTACHMENT:
-        attachment = INSTRUCTION_PHOTO_ATTACHMENT
-    # 2. Если есть локальный файл с изображением инструкции
-    elif INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
+
+async def get_or_upload_instruction_photo(api) -> str | None:
+    """
+    Получает или загружает фото-инструкцию на сервера ВКонтакте от имени бота.
+    Результат кэшируется в оперативной памяти на время работы процесса.
+    """
+    global _cached_instruction_attachment
+    if _cached_instruction_attachment:
+        return _cached_instruction_attachment
+
+    # 1. Если в .env явно указан attachment сообщества (начинается с 'photo-')
+    if INSTRUCTION_PHOTO_ATTACHMENT and INSTRUCTION_PHOTO_ATTACHMENT.startswith("photo-"):
+        _cached_instruction_attachment = INSTRUCTION_PHOTO_ATTACHMENT
+        return _cached_instruction_attachment
+
+    # 2. Загружаем локальный файл instruction.png через PhotoMessageUploader
+    if INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
         try:
-            uploader = PhotoMessageUploader(message.ctx_api)
-            attachment = await uploader.upload(INSTRUCTION_PHOTO_PATH, peer_id=message.peer_id)
+            uploader = PhotoMessageUploader(api)
+            # Загружаем без привязки к конкретному peer_id, чтобы attachment подходил для всех бесед
+            att = await uploader.upload(INSTRUCTION_PHOTO_PATH)
+            if att:
+                _cached_instruction_attachment = att
+                logger.info(f"Фото-инструкция успешно загружена в ВК и закэширована: {att}")
+                return att
         except Exception as e:
-            logger.warning(f"Не удалось загрузить фото-инструкцию: {e}")
+            logger.error(f"Не удалось загрузить фото-инструкцию из файла {INSTRUCTION_PHOTO_PATH}: {e}")
+
+    # 3. Fallback: если ничего другого нет, пробуем INSTRUCTION_PHOTO_ATTACHMENT
+    if INSTRUCTION_PHOTO_ATTACHMENT:
+        return INSTRUCTION_PHOTO_ATTACHMENT
+
+    return None
+
+
+async def send_bot_welcome_instruction(message: Message):
+    """Отправляет фото-инструкцию и памятку при добавлении бота в беседу или по /инструкция"""
+    global _cached_instruction_attachment
+    attachment = await get_or_upload_instruction_photo(message.ctx_api)
 
     text = (
         "🤖 Спасибо за добавление чат-менеджера в беседу!\n\n"
@@ -39,27 +66,41 @@ async def send_bot_welcome_instruction(message: Message):
         "4️⃣ Нажмите кнопку ниже для быстрой настройки фильтрации и запретов чата."
     )
 
-    kb = (
-        Keyboard(inline=True)
-        .add(
-            Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
-            color=KeyboardButtonColor.SECONDARY
-        )
-    ).get_json()
-
     send_kwargs = {
         "peer_id": message.peer_id,
         "message": text,
-        "keyboard": kb,
         "random_id": 0
     }
+
+    # Кнопку быстрых настроек запретов прикрепляем только для бесед (peer_id >= 2000000000)
+    if message.peer_id >= 2000000000:
+        send_kwargs["keyboard"] = (
+            Keyboard(inline=True)
+            .add(
+                Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
+                color=KeyboardButtonColor.SECONDARY
+            )
+        ).get_json()
+
     if attachment:
         send_kwargs["attachment"] = attachment
 
     try:
         await message.ctx_api.messages.send(**send_kwargs)
     except Exception as e:
-        logger.error(f"Ошибка отправки приветственной инструкции бота: {e}")
+        logger.warning(f"Ошибка отправки инструкции с вложением {attachment}: {e}. Пробуем отправить без вложения...")
+        # Если вложение вызвало отказ (например, неверный ID), сбрасываем кэш
+        _cached_instruction_attachment = None
+        send_kwargs.pop("attachment", None)
+        try:
+            await message.ctx_api.messages.send(**send_kwargs)
+        except Exception as e2:
+            logger.warning(f"Ошибка отправки с клавиатурой: {e2}. Пробуем отправить только текст...")
+            send_kwargs.pop("keyboard", None)
+            try:
+                await message.ctx_api.messages.send(**send_kwargs)
+            except Exception as e3:
+                logger.error(f"Не удалось отправить инструкцию: {e3}")
 
 
 @labeler.chat_message(ChatActionRule(["chat_invite_user", "chat_invite_user_by_link"]))

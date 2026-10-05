@@ -91,6 +91,17 @@ async def startup(bot: Bot):
     except Exception as e:
         logger.warning(f"Не удалось обновить настройки LongPoll через API: {e}")
 
+    # Прогрев и загрузка фото-инструкции на серверы ВК
+    try:
+        from handlers.events import get_or_upload_instruction_photo
+        att = await get_or_upload_instruction_photo(bot.api)
+        if att:
+            logger.info(f"Фото-инструкция готова к отправке: {att}")
+        else:
+            logger.warning("Фото-инструкция не найдена или не загружена.")
+    except Exception as e:
+        logger.warning(f"Предзагрузка фото-инструкции пропущена: {e}")
+
 
 def create_bot() -> Bot:
     """Сборка и настройка экземпляра бота"""

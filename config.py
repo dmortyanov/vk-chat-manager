@@ -18,8 +18,12 @@ COMMAND_PREFIXES = tuple(p.strip() for p in raw_prefixes.split(",") if p.strip()
 raw_dev_ids = os.getenv("DEV_IDS", "")
 DEV_IDS = tuple(int(x) for x in re.findall(r"\d+", raw_dev_ids))
 
-INSTRUCTION_PHOTO_PATH = os.getenv("INSTRUCTION_PHOTO_PATH", str(BASE_DIR / "assets" / "instruction.png"))
-INSTRUCTION_PHOTO_ATTACHMENT = os.getenv("INSTRUCTION_PHOTO_ATTACHMENT", "")
+raw_photo_path = os.getenv("INSTRUCTION_PHOTO_PATH", "assets/instruction.png")
+_p = Path(raw_photo_path)
+if not _p.is_absolute():
+    _p = (BASE_DIR / _p).resolve()
+INSTRUCTION_PHOTO_PATH = str(_p)
+INSTRUCTION_PHOTO_ATTACHMENT = os.getenv("INSTRUCTION_PHOTO_ATTACHMENT", "").strip()
 
 
 class Role(IntEnum):
