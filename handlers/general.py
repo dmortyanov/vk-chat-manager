@@ -225,3 +225,54 @@ async def cmd_instruction(message: Message):
     """Отправка фото-инструкции по настройке бота"""
     from handlers.events import send_bot_welcome_instruction
     await send_bot_welcome_instruction(message)
+
+
+@labeler.message(CommandRule(["фототест", "phototest"]))
+async def cmd_photo_test(message: Message):
+    """Диагностика загрузки и отправки фото-инструкции прямо в чате"""
+    from config import INSTRUCTION_PHOTO_URL, INSTRUCTION_PHOTO_PATH, INSTRUCTION_PHOTO_ATTACHMENT
+    from handlers.events import get_instruction_photo_data
+    from vkbottle import PhotoMessageUploader
+
+    lines = [
+        "🔬 Диагностика фото-инструкции:",
+        f"• INSTRUCTION_PHOTO_URL: {INSTRUCTION_PHOTO_URL or 'не задан'}",
+        f"• INSTRUCTION_PHOTO_PATH: {INSTRUCTION_PHOTO_PATH or 'не задан'}",
+        f"• INSTRUCTION_PHOTO_ATTACHMENT: {INSTRUCTION_PHOTO_ATTACHMENT or 'не задан'}",
+    ]
+
+    # 1. Скачивание/получение байт
+    data = None
+    try:
+        data = await get_instruction_photo_data()
+        if data:
+            lines.append(f"✅ Байты фото получены: {len(data)} байт")
+        else:
+            lines.append("❌ get_instruction_photo_data вернул None (URL недоступен или файл не найден)")
+    except Exception as e:
+        lines.append(f"❌ Ошибка получения байт: [{type(e).__name__}] {e}")
+
+    # 2. Попытка загрузки в ВК через PhotoMessageUploader
+    att = None
+    if data:
+        try:
+            uploader = PhotoMessageUploader(message.ctx_api)
+            att = await uploader.upload(data, peer_id=message.peer_id)
+            lines.append(f"✅ Загрузка в ВК успешна: {att}")
+        except Exception as e:
+            lines.append(f"❌ Ошибка PhotoMessageUploader: [{type(e).__name__}] {e}")
+
+    # 3. Отправка сообщения с вложением
+    if att:
+        try:
+            await message.ctx_api.messages.send(
+                peer_id=message.peer_id,
+                message="\n".join(lines) + "\n\n🎉 Фотография успешно прикреплена ниже!",
+                attachment=att,
+                random_id=0
+            )
+            return
+        except Exception as e:
+            lines.append(f"❌ messages.send с вложением завершился ошибкой: [{type(e).__name__}] {e}")
+
+    await message.answer("\n".join(lines))
