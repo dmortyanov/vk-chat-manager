@@ -153,7 +153,7 @@ async def cmd_silence(message: Message):
         )
 
 
-@labeler.message(CommandRule(["+ban", "+бан", "ban", "бан"], prefixes=("", "/")))
+@labeler.message(CommandRule(["ban", "бан"]))
 async def cmd_ban(message: Message):
     """Блокировка пользователя в беседе (доступно Администраторам 2+ ур.)"""
     if message.peer_id < 2000000000:
@@ -172,7 +172,7 @@ async def cmd_ban(message: Message):
 
     target_role = await check_user_role(message.peer_id, target_id)
     if target_role == Role.OWNER:
-        return await message.reply("❌ Нельзя заблокировать главного администратора беседы!")
+        return await message.reply("❌ Нельзя заблокировать Спец администратора беседы!")
     if caller_role <= target_role:
         return await message.reply(f"❌ Вы не можете заблокировать пользователя с равным или более высоким статусом ({Role.title(target_role)})!")
 
@@ -197,7 +197,7 @@ async def cmd_ban(message: Message):
     )
 
 
-@labeler.message(CommandRule(["-ban", "-бан", "unban", "разбан"], prefixes=("", "/")))
+@labeler.message(CommandRule(["unban", "разбан"]))
 async def cmd_unban(message: Message):
     """Разблокировка пользователя в беседе (не требует нахождения в беседе)"""
     if message.peer_id < 2000000000:

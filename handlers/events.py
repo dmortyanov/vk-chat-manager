@@ -1,11 +1,65 @@
+import os
+import json
 import logging
-from vkbottle.bot import BotLabeler, Message
+from vkbottle.bot import BotLabeler, Message, MessageEvent
+from vkbottle import Keyboard, KeyboardButtonColor, Callback, GroupEventType, PhotoMessageUploader
 from vkbottle.dispatch.rules.base import ChatActionRule
+from config import Role, INSTRUCTION_PHOTO_PATH, INSTRUCTION_PHOTO_ATTACHMENT
 from database.repository import Repository
 from utils.formatters import get_user_mention
+from utils.permissions import check_user_role
 
 logger = logging.getLogger(__name__)
 labeler = BotLabeler()
+
+
+async def send_bot_welcome_instruction(message: Message):
+    """Отправляет фото-инструкцию и памятку при добавлении бота в беседу"""
+    attachment = None
+
+    # 1. Если задан готовый attachment в .env
+    if INSTRUCTION_PHOTO_ATTACHMENT:
+        attachment = INSTRUCTION_PHOTO_ATTACHMENT
+    # 2. Если есть локальный файл с изображением инструкции
+    elif INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
+        try:
+            uploader = PhotoMessageUploader(message.ctx_api)
+            attachment = await uploader.upload(INSTRUCTION_PHOTO_PATH, peer_id=message.peer_id)
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить фото-инструкцию: {e}")
+
+    text = (
+        "🤖 Спасибо за добавление чат-менеджера в беседу!\n\n"
+        "📋 ПАМЯТКА ПО БЫСТРОЙ НАСТРОЙКЕ:\n"
+        "1️⃣ Назначьте бота Администратором беседы (иначе бот не сможет удалять сообщения и модерировать).\n"
+        "2️⃣ Главный администратор беседы должен ввести команду:\n"
+        "   👉 /start\n"
+        "   (это зафиксирует статус Спец администратора).\n"
+        "3️⃣ Введите /команды для просмотра списка всех возможностей.\n"
+        "4️⃣ Нажмите кнопку ниже для быстрой настройки фильтрации и запретов чата."
+    )
+
+    kb = (
+        Keyboard(inline=True)
+        .add(
+            Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
+            color=KeyboardButtonColor.SECONDARY
+        )
+    ).get_json()
+
+    send_kwargs = {
+        "peer_id": message.peer_id,
+        "message": text,
+        "keyboard": kb,
+        "random_id": 0
+    }
+    if attachment:
+        send_kwargs["attachment"] = attachment
+
+    try:
+        await message.ctx_api.messages.send(**send_kwargs)
+    except Exception as e:
+        logger.error(f"Ошибка отправки приветственной инструкции бота: {e}")
 
 
 @labeler.chat_message(ChatActionRule(["chat_invite_user", "chat_invite_user_by_link"]))
@@ -20,8 +74,17 @@ async def handle_chat_service_actions(message: Message):
         return
 
     user_id = action.member_id or message.from_id
-    if user_id <= 0:
-        return  # Боты или группы
+
+    # Проверяем, не добавлен ли сам бот (сообщество)
+    if user_id < 0:
+        try:
+            group_info = await message.ctx_api.groups.get_by_id()
+            bot_group_id = group_info.groups[0].id if group_info.groups else 0
+            if abs(user_id) == bot_group_id:
+                await send_bot_welcome_instruction(message)
+        except Exception as e:
+            logger.warning(f"Ошибка проверки добавления сообщества: {e}")
+        return
 
     peer_id = message.peer_id
     chat_id = peer_id - 2000000000
@@ -62,3 +125,35 @@ async def handle_chat_service_actions(message: Message):
             await message.answer(formatted_welcome)
         else:
             await message.answer(f"👋 Приветствуем, {target_mention}, в беседе «{chat_title}»!")
+
+
+@labeler.chat_message(ChatActionRule(["chat_kick_user"]))
+async def handle_user_leave(message: Message):
+    """
+    Обработка выхода / исключения участника из беседы.
+    При добровольном выходе отправляет сообщение с кнопками [Кикнуть] и [Очистить].
+    """
+    action = message.action
+    if not action:
+        return
+
+    kicked_user_id = action.member_id
+    if kicked_user_id <= 0:
+        return
+
+    target_mention = await get_user_mention(kicked_user_id, message.ctx_api)
+
+    # Инлайн-кнопки строго как на скриншоте ТЗ: Красная [Кикнуть] и Зеленая [Очистить]
+    kb = (
+        Keyboard(inline=True)
+        .add(
+            Callback("Кикнуть", payload=json.dumps({"cmd": "leave_kick", "uid": kicked_user_id, "cleaned": 0})),
+            color=KeyboardButtonColor.NEGATIVE
+        )
+        .add(
+            Callback("Очистить", payload=json.dumps({"cmd": "leave_clean", "uid": kicked_user_id, "kicked": 0})),
+            color=KeyboardButtonColor.POSITIVE
+        )
+    ).get_json()
+
+    await message.answer(f"🚪 Пользователь {target_mention} покинул беседу.", keyboard=kb)

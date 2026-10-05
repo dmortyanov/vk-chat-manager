@@ -60,9 +60,32 @@ async def init_db():
             UNIQUE(peer_id, user_id)
         );
 
+        CREATE TABLE IF NOT EXISTS chat_rules (
+            peer_id INTEGER NOT NULL,
+            rule_name TEXT NOT NULL,
+            action TEXT NOT NULL,
+            PRIMARY KEY (peer_id, rule_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_banwords (
+            peer_id INTEGER NOT NULL,
+            word TEXT NOT NULL,
+            PRIMARY KEY (peer_id, word)
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            peer_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            cmid INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_members_role ON chat_members(peer_id, role);
         CREATE INDEX IF NOT EXISTS idx_warns_chat ON chat_warns(peer_id, user_id);
         CREATE INDEX IF NOT EXISTS idx_bans_chat ON chat_bans(peer_id, user_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_rules ON chat_rules(peer_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_peer_user ON chat_messages(peer_id, user_id, id);
         """)
         await db.commit()
     logger.info("База данных SQLite успешно инициализирована.")

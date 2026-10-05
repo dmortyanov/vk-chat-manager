@@ -47,7 +47,7 @@ async def cmd_kick(message: Message):
         )
 
 
-@labeler.message(CommandRule(["+warn", "+варн", "warn", "варн"], prefixes=("", "/")))
+@labeler.message(CommandRule(["warn", "варн"]))
 async def cmd_warn(message: Message):
     """Выдача предупреждения участнику (при 3/3 — авто-кик)"""
     if message.peer_id < 2000000000:
@@ -100,7 +100,7 @@ async def cmd_warn(message: Message):
         )
 
 
-@labeler.message(CommandRule(["-warn", "-варн", "unwarn", "анварн", "снятьварн"], prefixes=("", "/")))
+@labeler.message(CommandRule(["unwarn", "анварн", "снятьварн"]))
 async def cmd_unwarn(message: Message):
     """Снятие предупреждения у пользователя"""
     if message.peer_id < 2000000000:

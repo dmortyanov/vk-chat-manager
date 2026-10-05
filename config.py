@@ -18,13 +18,16 @@ COMMAND_PREFIXES = tuple(p.strip() for p in raw_prefixes.split(",") if p.strip()
 raw_dev_ids = os.getenv("DEV_IDS", "")
 DEV_IDS = tuple(int(x) for x in re.findall(r"\d+", raw_dev_ids))
 
+INSTRUCTION_PHOTO_PATH = os.getenv("INSTRUCTION_PHOTO_PATH", str(BASE_DIR / "assets" / "instruction.png"))
+INSTRUCTION_PHOTO_ATTACHMENT = os.getenv("INSTRUCTION_PHOTO_ATTACHMENT", "")
+
 
 class Role(IntEnum):
     """Иерархия ролей в чат-менеджере"""
     USER = 0        # Обычный участник беседы
     MODERATOR = 1   # Модератор (1 уровень)
     ADMIN = 2       # Администратор (2 уровень)
-    OWNER = 3       # Главный администратор / Создатель беседы (3 уровень)
+    OWNER = 3       # Спец администратор / Создатель беседы (3 уровень)
 
     @classmethod
     def title(cls, role_val: int) -> str:
@@ -32,6 +35,6 @@ class Role(IntEnum):
             cls.USER: "👤 Участник",
             cls.MODERATOR: "🛡️ Модератор",
             cls.ADMIN: "⭐ Администратор",
-            cls.OWNER: "👑 Главный администратор",
+            cls.OWNER: "👑 Спец администратор",
         }
         return titles.get(role_val, "👤 Участник")

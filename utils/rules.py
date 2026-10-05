@@ -34,8 +34,8 @@ class CommandRule(ABCRule):
         if not clean:
             return False
 
-        # Строгая проверка: сообщение ОБЯЗАТЕЛЬНО должно начинаться с допустимого префикса
-        if not any(clean.startswith(start) for start in VALID_COMMAND_STARTS):
+        # Строгая проверка: сообщение ОБЯЗАТЕЛЬНО должно начинаться с допустимого префикса (если пустой префикс не разрешен)
+        if "" not in self.prefixes and not any(clean.startswith(start) for start in VALID_COMMAND_STARTS):
             return False
 
         for cmd in self.commands:

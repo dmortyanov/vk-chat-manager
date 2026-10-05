@@ -2,7 +2,7 @@ import json
 import asyncio
 import logging
 from vkbottle.bot import BotLabeler, Message, MessageEvent
-from vkbottle import Keyboard, KeyboardButtonColor, Callback, GroupEventType
+from vkbottle import Keyboard, KeyboardButtonColor, Callback, Text, GroupEventType
 from config import Role, DEV_IDS
 from database.repository import Repository
 from utils.rules import CommandRule
@@ -32,6 +32,15 @@ async def cmd_start(message: Message):
     except Exception as e:
         logger.warning(f"Не удалось получить создателя беседы через API: {e}")
 
+    # Инлайн-клавиатура с кнопкой 'Настроить запреты' строго под сообщением
+    rules_inline_kb = (
+        Keyboard(inline=True)
+        .add(
+            Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
+            color=KeyboardButtonColor.SECONDARY
+        )
+    ).get_json()
+
     # Если беседа еще не была зарегистрирована или вызывающий — создатель беседы
     if not chat or not chat.get("owner_id") or message.from_id == vk_owner_id:
         await Repository.set_chat_owner(peer_id, message.from_id)
@@ -39,22 +48,24 @@ async def cmd_start(message: Message):
 
         return await message.answer(
             f"🎉 Беседа успешно инициализирована!\n\n"
-            f"👑 Главный администратор: {owner_mention}\n"
+            f"👑 Спец администратор: {owner_mention}\n"
             f"🛡️ Чат-менеджер готов к работе.\n\n"
             f"💡 Введите /команды, чтобы ознакомиться со всеми возможностями бота.\n"
-            f"⚙️ Не забудьте выдать боту права Администратора в настройках беседы!"
+            f"⚙️ Не забудьте выдать боту права Администратора в настройках беседы!",
+            keyboard=rules_inline_kb
         )
 
     owner_mention = await get_user_mention(chat["owner_id"], message.ctx_api)
     await message.reply(
         f"ℹ️ Эта беседа уже инициализирована.\n"
-        f"👑 Главный администратор беседы: {owner_mention}"
+        f"👑 Спец администратор беседы: {owner_mention}",
+        keyboard=rules_inline_kb
     )
 
 
-@labeler.message(CommandRule(["+admin", "+админ"], prefixes=("", "/")))
+@labeler.message(CommandRule(["+admin", "+админ", "admin", "админ"], prefixes=("", "/")))
 async def cmd_promote_admin(message: Message):
-    """Назначение администратора беседы (доступно Главному админу)"""
+    """Назначение администратора беседы (доступно Спец админу)"""
     if message.peer_id < 2000000000:
         return await message.reply("❌ Команда доступна только в беседах!")
 
@@ -83,9 +94,9 @@ async def cmd_promote_admin(message: Message):
     )
 
 
-@labeler.message(CommandRule(["-admin", "-админ"], prefixes=("", "/")))
+@labeler.message(CommandRule(["-admin", "-админ", "unadmin", "разадмин"], prefixes=("", "/")))
 async def cmd_demote_admin(message: Message):
-    """Снятие прав администратора (доступно Главному админу)"""
+    """Снятие прав администратора (доступно Спец админу)"""
     if message.peer_id < 2000000000:
         return await message.reply("❌ Команда доступна только в беседах!")
 
@@ -205,40 +216,6 @@ async def cmd_demote(message: Message):
     )
 
 
-@labeler.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
-async def handle_demote_callback(event: MessageEvent):
-    """Обработчик интерактивных кнопок VK для расформирования беседы"""
-    payload = event.payload
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:
-            return
-
-    cmd = payload.get("cmd")
-    if cmd not in ("confirm_demote", "cancel_demote"):
-        return
-
-    expected_owner = payload.get("owner_id")
-    if event.user_id != expected_owner:
-        return await event.show_snackbar("❌ Только инициатор (Главный админ) может нажать эту кнопку!")
-
-    peer_id = event.peer_id
-
-    if cmd == "cancel_demote":
-        await event.ctx_api.messages.send(
-            peer_id=peer_id,
-            random_id=0,
-            message="🛡️ Расформирование беседы отменено."
-        )
-        await event.show_snackbar("Действие отменено.")
-        return
-
-    if cmd == "confirm_demote":
-        await event.show_snackbar("Начинаю расформирование беседы...")
-        await execute_demote(peer_id, event.user_id, event.ctx_api)
-
-
 async def execute_demote(peer_id: int, admin_id: int, api):
     """Выполняет исключение всех обычных участников беседы"""
     chat_id = peer_id - 2000000000
@@ -352,5 +329,66 @@ async def cmd_broadcast(message: Message):
         f"✅ Доставлено в бесед: {success_count}\n"
         f"⚠️ Ошибок отправки: {fail_count}\n"
         f"💬 Всего бесед в базе: {len(chat_ids)}"
+    )
+
+
+@labeler.message(CommandRule(["акик", "allkick"]))
+async def cmd_allkick(message: Message):
+    """
+    Исключение нарушителя из ВСЕХ бесед, где вызывающий является Спец администратором.
+    Доступно только Спец администраторам (3 ур.) и разработчикам.
+    """
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.OWNER and message.from_id not in DEV_IDS:
+        return
+
+    target_id, reason = await resolve_target_and_args(message, message.ctx_api, command_name="акик")
+    if not target_id:
+        return await message.reply("❌ Укажите ID пользователя для глобального исключения (ответом на сообщение, ссылкой или @упоминанием).")
+
+    if target_id == message.from_id:
+        return await message.reply("❌ Вы не можете исключить самого себя!")
+
+    if message.from_id in DEV_IDS:
+        target_chats = await Repository.get_all_chat_ids()
+    else:
+        target_chats = await Repository.get_owner_chats(message.from_id)
+
+    # Гарантируем, что текущая беседа тоже включена
+    if message.peer_id >= 2000000000 and message.peer_id not in target_chats:
+        target_chats.append(message.peer_id)
+
+    if not target_chats:
+        return await message.reply("❌ У вас нет зарегистрированных под вашим управлением бесед.")
+
+    reason = reason.strip() or "Глобальное исключение администратором сети бесед"
+    target_mention = await get_user_mention(target_id, message.ctx_api)
+    admin_mention = await get_user_mention(message.from_id, message.ctx_api)
+
+    await message.reply(f"⏳ Выполняю исключение {target_mention} из ваших бесед ({len(target_chats)})...")
+
+    kicked_count = 0
+
+    for peer_id in target_chats:
+        # Проверяем, не является ли цель создателем в этом чате
+        t_role = await Repository.get_member_role(peer_id, target_id)
+        if t_role >= Role.OWNER and message.from_id not in DEV_IDS:
+            continue
+
+        # Пытаемся исключить (кикнуть) из чата без блокировки
+        chat_id = peer_id - 2000000000
+        try:
+            await message.ctx_api.messages.remove_chat_user(chat_id=chat_id, member_id=target_id)
+            kicked_count += 1
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+
+    await message.reply(
+        f"🚪 Глобальное исключение (/акик) завершено!\n\n"
+        f"👤 Нарушитель: {target_mention}\n"
+        f"👑 Спец администратор: {admin_mention}\n"
+        f"📝 Причина: {reason}\n\n"
+        f"✅ Исключен из бесед: {kicked_count} из {len(target_chats)}"
     )
 

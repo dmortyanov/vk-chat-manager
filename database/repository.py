@@ -43,6 +43,23 @@ class Repository:
                 return [row["peer_id"] for row in rows]
 
     @staticmethod
+    async def get_owner_chats(owner_id: int) -> List[int]:
+        """Возвращает список peer_id бесед, в которых пользователь является Спец администратором/владельцем"""
+        async with get_db() as db:
+            async with db.execute(
+                """
+                SELECT DISTINCT peer_id FROM (
+                    SELECT peer_id FROM chats WHERE owner_id = ?
+                    UNION
+                    SELECT peer_id FROM chat_members WHERE user_id = ? AND role = ?
+                ) WHERE peer_id >= 2000000000
+                """,
+                (owner_id, owner_id, Role.OWNER)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row["peer_id"] for row in rows]
+
+    @staticmethod
     async def set_chat_owner(peer_id: int, owner_id: int):
         async with get_db() as db:
             await db.execute(
@@ -334,3 +351,104 @@ class Repository:
                 (peer_id,)
             ) as cursor:
                 return [dict(row) for row in await cursor.fetchall()]
+
+    # --- RULES & SECURITY ---
+    @staticmethod
+    async def get_chat_rules(peer_id: int) -> Dict[str, str]:
+        """Возвращает словарь настроенных правил для беседы: {rule_name: action}"""
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT rule_name, action FROM chat_rules WHERE peer_id = ?",
+                (peer_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return {row["rule_name"]: row["action"] for row in rows}
+
+    @staticmethod
+    async def set_chat_rule(peer_id: int, rule_name: str, action: str):
+        """Устанавливает действие для правила (разрешено, пред, мут, кик, бан)"""
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO chat_rules (peer_id, rule_name, action) VALUES (?, ?, ?)
+                ON CONFLICT(peer_id, rule_name) DO UPDATE SET action = excluded.action
+                """,
+                (peer_id, rule_name, action)
+            )
+            await db.commit()
+
+    # --- BANWORDS ---
+    @staticmethod
+    async def get_banwords(peer_id: int) -> List[str]:
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT word FROM chat_banwords WHERE peer_id = ? ORDER BY word ASC",
+                (peer_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row["word"] for row in rows]
+
+    @staticmethod
+    async def add_banword(peer_id: int, word: str) -> bool:
+        word = word.strip().lower()
+        if not word:
+            return False
+        async with get_db() as db:
+            try:
+                await db.execute(
+                    "INSERT INTO chat_banwords (peer_id, word) VALUES (?, ?)",
+                    (peer_id, word)
+                )
+                await db.commit()
+                return True
+            except Exception:
+                return False
+
+    @staticmethod
+    async def remove_banword(peer_id: int, word: str) -> bool:
+        word = word.strip().lower()
+        async with get_db() as db:
+            async with db.execute(
+                "DELETE FROM chat_banwords WHERE peer_id = ? AND word = ?",
+                (peer_id, word)
+            ) as cursor:
+                await db.commit()
+                return cursor.rowcount > 0
+
+    # --- RECENT MESSAGES (FOR PURGE / CLEANUP) ---
+    @staticmethod
+    async def save_message_cmid(peer_id: int, user_id: int, cmid: int):
+        async with get_db() as db:
+            await db.execute(
+                "INSERT INTO chat_messages (peer_id, user_id, cmid) VALUES (?, ?, ?)",
+                (peer_id, user_id, cmid)
+            )
+            # Очищаем очень старые сообщения (старше 2 дней) время от времени
+            await db.execute(
+                "DELETE FROM chat_messages WHERE created_at < datetime('now', '-2 days')"
+            )
+            await db.commit()
+
+    @staticmethod
+    async def get_user_cmids(peer_id: int, user_id: int, limit: int = 100) -> List[int]:
+        """Возвращает conversation_message_id последних сообщений пользователя за 24 часа"""
+        async with get_db() as db:
+            async with db.execute(
+                """
+                SELECT cmid FROM chat_messages 
+                WHERE peer_id = ? AND user_id = ? AND created_at >= datetime('now', '-1 day')
+                ORDER BY id DESC LIMIT ?
+                """,
+                (peer_id, user_id, limit)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row["cmid"] for row in rows]
+
+    @staticmethod
+    async def delete_user_cmids(peer_id: int, user_id: int):
+        async with get_db() as db:
+            await db.execute(
+                "DELETE FROM chat_messages WHERE peer_id = ? AND user_id = ?",
+                (peer_id, user_id)
+            )
+            await db.commit()

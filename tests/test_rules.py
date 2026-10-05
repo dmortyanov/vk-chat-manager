@@ -27,10 +27,10 @@ async def test_command_rule():
     minus_admin_rule = CommandRule(["-admin", "-админ"], prefixes=("", "/"))
     plus_moder_rule = CommandRule(["+moder", "+модер", "+moders", "moder", "модер", "moders"], prefixes=("", "/"))
     minus_moder_rule = CommandRule(["-moder", "-модер", "-moders", "unmoder", "размодер"], prefixes=("", "/"))
-    ban_rule = CommandRule(["+ban", "+бан", "ban", "бан"], prefixes=("", "/"))
-    unban_rule = CommandRule(["-ban", "-бан", "unban", "разбан"], prefixes=("", "/"))
-    warn_rule = CommandRule(["+warn", "+варн", "warn", "варн"], prefixes=("", "/"))
-    unwarn_rule = CommandRule(["-warn", "-варн", "unwarn", "анварн", "снятьварн"], prefixes=("", "/"))
+    ban_rule = CommandRule(["ban", "бан"], prefixes=("/",))
+    unban_rule = CommandRule(["unban", "разбан"], prefixes=("/",))
+    warn_rule = CommandRule(["warn", "варн"], prefixes=("/",))
+    unwarn_rule = CommandRule(["unwarn", "анварн", "снятьварн"], prefixes=("/",))
     admins_rule = CommandRule(["админы", "администраторы", "admins", "administrators"], prefixes=("/",))
     moderators_rule = CommandRule(["модераторы", "модеры", "moders", "moderators"], prefixes=("/",))
 
@@ -85,14 +85,14 @@ async def test_command_rule():
     assert await minus_moder_rule.check(MockEvent("-moder @user")), "-moder @user должна срабатывать"
     assert await minus_moder_rule.check(MockEvent("-модер @user")), "-модер @user должна срабатывать"
     assert await minus_moder_rule.check(MockEvent("-moders @user")), "-moders @user должна срабатывать"
-    assert await ban_rule.check(MockEvent("+ban @user")), "+ban @user должна срабатывать"
-    assert await ban_rule.check(MockEvent("+бан @user")), "+бан @user должна срабатывать"
-    assert await unban_rule.check(MockEvent("-ban @user")), "-ban @user должна срабатывать"
-    assert await unban_rule.check(MockEvent("-бан @user")), "-бан @user должна срабатывать"
-    assert await warn_rule.check(MockEvent("+warn @user")), "+warn @user должна срабатывать"
-    assert await warn_rule.check(MockEvent("+варн @user")), "+варн @user должна срабатывать"
-    assert await unwarn_rule.check(MockEvent("-warn @user")), "-warn @user должна срабатывать"
-    assert await unwarn_rule.check(MockEvent("-варн @user")), "-варн @user должна срабатывать"
+    assert not await ban_rule.check(MockEvent("+ban @user")), "+ban не должно срабатывать (только /ban)"
+    assert not await ban_rule.check(MockEvent("+бан @user")), "+бан не должно срабатывать (только /бан)"
+    assert not await unban_rule.check(MockEvent("-ban @user")), "-ban не должно срабатывать (только /unban)"
+    assert not await unban_rule.check(MockEvent("-бан @user")), "-бан не должно срабатывать (только /разбан)"
+    assert not await warn_rule.check(MockEvent("+warn @user")), "+warn не должно срабатывать (только /warn)"
+    assert not await warn_rule.check(MockEvent("+варн @user")), "+варн не должно срабатывать (только /варн)"
+    assert not await unwarn_rule.check(MockEvent("-warn @user")), "-warn не должно срабатывать (только /unwarn)"
+    assert not await unwarn_rule.check(MockEvent("-варн @user")), "-варн не должно срабатывать (только /анварн)"
     print("✅ Команды с префиксами '+' и '-' корректно распознаются")
 
     # 5. Проверяем упоминания бота [club123|Бот]
