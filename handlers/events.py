@@ -74,16 +74,19 @@ async def get_instruction_photo_data() -> bytes | None:
 async def get_photo_attachment_for_peer(api, peer_id: int) -> str | None:
     """
     Возвращает attachment для конкретного peer_id:
-    1. Если в .env задан статический attachment сообщества (начинается с photo-), возвращаем его.
+    1. Если в .env задан статический attachment сообщества (начинается с 'photo' и НЕ ссылка), возвращаем его.
     2. Если уже загружен для этого peer_id в кэше - возвращаем из кэша.
-    3. Иначе загружаем байты через PhotoMessageUploader(api).upload(bytes, peer_id=peer_id).
+    3. Иначе скачиваем/читаем байты фото и загружаем через PhotoMessageUploader(api).upload(data, peer_id=peer_id).
     """
-    if INSTRUCTION_PHOTO_ATTACHMENT and INSTRUCTION_PHOTO_ATTACHMENT.startswith("photo-"):
+    # Если задан реальный VK attachment (photo-XXXX_YYYY или photoXXXX_YYYY), и это НЕ URL:
+    if INSTRUCTION_PHOTO_ATTACHMENT and INSTRUCTION_PHOTO_ATTACHMENT.startswith("photo") and not INSTRUCTION_PHOTO_ATTACHMENT.startswith("http"):
         return INSTRUCTION_PHOTO_ATTACHMENT
 
+    # Если фото уже загружено и привязано к этой беседе в кэше:
     if peer_id in _peer_photo_cache:
         return _peer_photo_cache[peer_id]
 
+    # Скачиваем байты (по ссылке или из локального файла) и загружаем в ВК как НАСТОЯЩЕЕ ФОТО
     data = await get_instruction_photo_data()
     if data:
         try:
@@ -91,13 +94,10 @@ async def get_photo_attachment_for_peer(api, peer_id: int) -> str | None:
             att = await uploader.upload(data, peer_id=peer_id)
             if att:
                 _peer_photo_cache[peer_id] = att
-                logger.info(f"Фото-инструкция успешно загружена для беседы {peer_id}: {att}")
+                logger.info(f"Фото-инструкция успешно загружена в ВК для беседы {peer_id}: {att}")
                 return att
         except Exception as e:
-            logger.error(f"Не удалось загрузить фото-инструкцию для peer_id={peer_id}: {e}")
-
-    if INSTRUCTION_PHOTO_ATTACHMENT:
-        return INSTRUCTION_PHOTO_ATTACHMENT
+            logger.error(f"Не удалось загрузить фото-инструкцию в ВК для peer_id={peer_id}: {e}")
 
     return None
 
@@ -126,17 +126,16 @@ async def send_bot_welcome_instruction(message: Message):
 
     # Кнопку быстрых настроек запретов прикрепляем только для бесед (peer_id >= 2000000000)
     if peer_id >= 2000000000:
-        kb = Keyboard(inline=True)
-        kb.add(
-            Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
-            color=KeyboardButtonColor.SECONDARY
-        )
-        target_url = INSTRUCTION_PHOTO_URL or (INSTRUCTION_PHOTO_PATH if str(INSTRUCTION_PHOTO_PATH).startswith("http") else "")
-        if target_url:
-            kb.add(OpenLink("🖼 Открыть фото", link=target_url))
-        send_kwargs["keyboard"] = kb.get_json()
+        send_kwargs["keyboard"] = (
+            Keyboard(inline=True)
+            .add(
+                Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
+                color=KeyboardButtonColor.SECONDARY
+            )
+        ).get_json()
 
-    if attachment:
+    # Вложение должно быть ТОЛЬКО строкой photo... (настоящей фотографией), а не ссылкой
+    if attachment and attachment.startswith("photo") and not attachment.startswith("http"):
         send_kwargs["attachment"] = attachment
 
     try:
