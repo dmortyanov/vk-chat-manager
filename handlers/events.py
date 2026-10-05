@@ -28,11 +28,29 @@ async def get_instruction_photo_data() -> bytes | None:
     if target_url:
         try:
             import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(target_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            import re
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+                # Если передана страница ibb.co (например, https://ibb.co/xtG49rZT), извлекаем прямую ссылку
+                if "ibb.co/" in target_url and not any(target_url.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")):
+                    try:
+                        async with session.get(target_url, timeout=aiohttp.ClientTimeout(total=10)) as page_resp:
+                            if page_resp.status == 200:
+                                html = await page_resp.text()
+                                m = re.search(r'property=["\']og:image["\'] content=["\']([^"\']+)["\']', html)
+                                if not m:
+                                    m = re.search(r'link rel=["\']image_src["\'] href=["\']([^"\']+)["\']', html)
+                                if m:
+                                    logger.info(f"Извлечена прямая ссылка из ibb.co: {m.group(1)}")
+                                    target_url = m.group(1)
+                    except Exception as e_parse:
+                        logger.warning(f"Не удалось распарсить страницу {target_url}: {e_parse}")
+
+                async with session.get(target_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status == 200:
                         _cached_photo_bytes = await resp.read()
-                        logger.info(f"Фото-инструкция успешно скачана по URL: {target_url} ({len(_cached_photo_bytes)} байт)")
+                        logger.info(f"Фото-инструкция успешно скачана ({len(_cached_photo_bytes)} байт)")
                         return _cached_photo_bytes
                     else:
                         logger.error(f"Не удалось скачать фото-инструкцию по URL {target_url}: HTTP {resp.status}")
