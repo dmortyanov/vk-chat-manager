@@ -13,37 +13,34 @@ logger = logging.getLogger(__name__)
 labeler = BotLabeler()
 
 
-_cached_instruction_attachment: str | None = None
+_peer_photo_cache: dict[int, str] = {}
 
 
-async def get_or_upload_instruction_photo(api) -> str | None:
+async def get_photo_attachment_for_peer(api, peer_id: int) -> str | None:
     """
-    Получает или загружает фото-инструкцию на сервера ВКонтакте от имени бота.
-    Результат кэшируется в оперативной памяти на время работы процесса.
+    Возвращает attachment для конкретного peer_id:
+    1. Если в .env задан статический attachment сообщества (начинается с photo-), возвращаем его.
+    2. Если уже загружен для этого peer_id в кэше - возвращаем из кэша.
+    3. Иначе загружаем через PhotoMessageUploader(api).upload(..., peer_id=peer_id)
+       и кэшируем для этого peer_id.
     """
-    global _cached_instruction_attachment
-    if _cached_instruction_attachment:
-        return _cached_instruction_attachment
-
-    # 1. Если в .env явно указан attachment сообщества (начинается с 'photo-')
     if INSTRUCTION_PHOTO_ATTACHMENT and INSTRUCTION_PHOTO_ATTACHMENT.startswith("photo-"):
-        _cached_instruction_attachment = INSTRUCTION_PHOTO_ATTACHMENT
-        return _cached_instruction_attachment
+        return INSTRUCTION_PHOTO_ATTACHMENT
 
-    # 2. Загружаем локальный файл instruction.png через PhotoMessageUploader
+    if peer_id in _peer_photo_cache:
+        return _peer_photo_cache[peer_id]
+
     if INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
         try:
             uploader = PhotoMessageUploader(api)
-            # Загружаем без привязки к конкретному peer_id, чтобы attachment подходил для всех бесед
-            att = await uploader.upload(INSTRUCTION_PHOTO_PATH)
+            att = await uploader.upload(INSTRUCTION_PHOTO_PATH, peer_id=peer_id)
             if att:
-                _cached_instruction_attachment = att
-                logger.info(f"Фото-инструкция успешно загружена в ВК и закэширована: {att}")
+                _peer_photo_cache[peer_id] = att
+                logger.info(f"Фото-инструкция успешно загружена для беседы {peer_id}: {att}")
                 return att
         except Exception as e:
-            logger.error(f"Не удалось загрузить фото-инструкцию из файла {INSTRUCTION_PHOTO_PATH}: {e}")
+            logger.error(f"Не удалось загрузить фото-инструкцию для peer_id={peer_id}: {e}")
 
-    # 3. Fallback: если ничего другого нет, пробуем INSTRUCTION_PHOTO_ATTACHMENT
     if INSTRUCTION_PHOTO_ATTACHMENT:
         return INSTRUCTION_PHOTO_ATTACHMENT
 
@@ -52,8 +49,8 @@ async def get_or_upload_instruction_photo(api) -> str | None:
 
 async def send_bot_welcome_instruction(message: Message):
     """Отправляет фото-инструкцию и памятку при добавлении бота в беседу или по /инструкция"""
-    global _cached_instruction_attachment
-    attachment = await get_or_upload_instruction_photo(message.ctx_api)
+    peer_id = message.peer_id
+    attachment = await get_photo_attachment_for_peer(message.ctx_api, peer_id)
 
     text = (
         "🤖 Спасибо за добавление чат-менеджера в беседу!\n\n"
@@ -67,13 +64,13 @@ async def send_bot_welcome_instruction(message: Message):
     )
 
     send_kwargs = {
-        "peer_id": message.peer_id,
+        "peer_id": peer_id,
         "message": text,
         "random_id": 0
     }
 
     # Кнопку быстрых настроек запретов прикрепляем только для бесед (peer_id >= 2000000000)
-    if message.peer_id >= 2000000000:
+    if peer_id >= 2000000000:
         send_kwargs["keyboard"] = (
             Keyboard(inline=True)
             .add(
@@ -87,20 +84,36 @@ async def send_bot_welcome_instruction(message: Message):
 
     try:
         await message.ctx_api.messages.send(**send_kwargs)
+        return
     except Exception as e:
-        logger.warning(f"Ошибка отправки инструкции с вложением {attachment}: {e}. Пробуем отправить без вложения...")
-        # Если вложение вызвало отказ (например, неверный ID), сбрасываем кэш
-        _cached_instruction_attachment = None
-        send_kwargs.pop("attachment", None)
+        logger.warning(f"Ошибка отправки инструкции с вложением {attachment} в беседу {peer_id}: {e}")
+
+    # Если отправка с текущим attachment завершилась ошибкой (например, неверный ID из .env):
+    # Принудительно загружаем фото с диска именно для этой беседы peer_id
+    if INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
+        try:
+            uploader = PhotoMessageUploader(message.ctx_api)
+            fresh_att = await uploader.upload(INSTRUCTION_PHOTO_PATH, peer_id=peer_id)
+            if fresh_att and fresh_att != attachment:
+                _peer_photo_cache[peer_id] = fresh_att
+                send_kwargs["attachment"] = fresh_att
+                await message.ctx_api.messages.send(**send_kwargs)
+                logger.info(f"Инструкция успешно отправлена со свежезагруженным фото {fresh_att}")
+                return
+        except Exception as upload_err:
+            logger.error(f"Повторная загрузка фото для peer_id={peer_id} не удалась: {upload_err}")
+
+    # Fallback: если фото так и не удалось отправить, отправляем текст и клавиатуру
+    send_kwargs.pop("attachment", None)
+    try:
+        await message.ctx_api.messages.send(**send_kwargs)
+    except Exception as e2:
+        logger.warning(f"Ошибка отправки с клавиатурой: {e2}. Пробуем отправить только текст...")
+        send_kwargs.pop("keyboard", None)
         try:
             await message.ctx_api.messages.send(**send_kwargs)
-        except Exception as e2:
-            logger.warning(f"Ошибка отправки с клавиатурой: {e2}. Пробуем отправить только текст...")
-            send_kwargs.pop("keyboard", None)
-            try:
-                await message.ctx_api.messages.send(**send_kwargs)
-            except Exception as e3:
-                logger.error(f"Не удалось отправить инструкцию: {e3}")
+        except Exception as e3:
+            logger.error(f"Не удалось отправить инструкцию: {e3}")
 
 
 @labeler.chat_message(ChatActionRule(["chat_invite_user", "chat_invite_user_by_link"]))
