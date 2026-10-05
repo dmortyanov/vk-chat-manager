@@ -2,9 +2,9 @@ import os
 import json
 import logging
 from vkbottle.bot import BotLabeler, Message, MessageEvent
-from vkbottle import Keyboard, KeyboardButtonColor, Callback, GroupEventType, PhotoMessageUploader
+from vkbottle import Keyboard, KeyboardButtonColor, Callback, OpenLink, GroupEventType, PhotoMessageUploader
 from vkbottle.dispatch.rules.base import ChatActionRule
-from config import Role, INSTRUCTION_PHOTO_PATH, INSTRUCTION_PHOTO_ATTACHMENT
+from config import Role, INSTRUCTION_PHOTO_PATH, INSTRUCTION_PHOTO_URL, INSTRUCTION_PHOTO_ATTACHMENT
 from database.repository import Repository
 from utils.formatters import get_user_mention
 from utils.permissions import check_user_role
@@ -14,6 +14,43 @@ labeler = BotLabeler()
 
 
 _peer_photo_cache: dict[int, str] = {}
+_cached_photo_bytes: bytes | None = None
+
+
+async def get_instruction_photo_data() -> bytes | None:
+    """Получает байты фото-инструкции по ссылке из интернета или из локального файла"""
+    global _cached_photo_bytes
+    if _cached_photo_bytes:
+        return _cached_photo_bytes
+
+    # 1. Если задан прямой URL на картинку
+    target_url = INSTRUCTION_PHOTO_URL or (INSTRUCTION_PHOTO_PATH if str(INSTRUCTION_PHOTO_PATH).startswith("http") else "")
+    if target_url:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(target_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        _cached_photo_bytes = await resp.read()
+                        logger.info(f"Фото-инструкция успешно скачана по URL: {target_url} ({len(_cached_photo_bytes)} байт)")
+                        return _cached_photo_bytes
+                    else:
+                        logger.error(f"Не удалось скачать фото-инструкцию по URL {target_url}: HTTP {resp.status}")
+        except Exception as e:
+            logger.error(f"Ошибка при скачивании фото-инструкции по URL {target_url}: {e}")
+
+    # 2. Если есть локальный файл
+    if INSTRUCTION_PHOTO_PATH and not str(INSTRUCTION_PHOTO_PATH).startswith("http") and os.path.isfile(INSTRUCTION_PHOTO_PATH):
+        try:
+            import aiofiles
+            async with aiofiles.open(INSTRUCTION_PHOTO_PATH, "rb") as f:
+                _cached_photo_bytes = await f.read()
+                logger.info(f"Фото-инструкция прочитана из локального файла ({len(_cached_photo_bytes)} байт)")
+                return _cached_photo_bytes
+        except Exception as e:
+            logger.error(f"Ошибка чтения локального файла {INSTRUCTION_PHOTO_PATH}: {e}")
+
+    return None
 
 
 async def get_photo_attachment_for_peer(api, peer_id: int) -> str | None:
@@ -21,8 +58,7 @@ async def get_photo_attachment_for_peer(api, peer_id: int) -> str | None:
     Возвращает attachment для конкретного peer_id:
     1. Если в .env задан статический attachment сообщества (начинается с photo-), возвращаем его.
     2. Если уже загружен для этого peer_id в кэше - возвращаем из кэша.
-    3. Иначе загружаем через PhotoMessageUploader(api).upload(..., peer_id=peer_id)
-       и кэшируем для этого peer_id.
+    3. Иначе загружаем байты через PhotoMessageUploader(api).upload(bytes, peer_id=peer_id).
     """
     if INSTRUCTION_PHOTO_ATTACHMENT and INSTRUCTION_PHOTO_ATTACHMENT.startswith("photo-"):
         return INSTRUCTION_PHOTO_ATTACHMENT
@@ -30,10 +66,11 @@ async def get_photo_attachment_for_peer(api, peer_id: int) -> str | None:
     if peer_id in _peer_photo_cache:
         return _peer_photo_cache[peer_id]
 
-    if INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
+    data = await get_instruction_photo_data()
+    if data:
         try:
             uploader = PhotoMessageUploader(api)
-            att = await uploader.upload(INSTRUCTION_PHOTO_PATH, peer_id=peer_id)
+            att = await uploader.upload(data, peer_id=peer_id)
             if att:
                 _peer_photo_cache[peer_id] = att
                 logger.info(f"Фото-инструкция успешно загружена для беседы {peer_id}: {att}")
@@ -71,13 +108,15 @@ async def send_bot_welcome_instruction(message: Message):
 
     # Кнопку быстрых настроек запретов прикрепляем только для бесед (peer_id >= 2000000000)
     if peer_id >= 2000000000:
-        send_kwargs["keyboard"] = (
-            Keyboard(inline=True)
-            .add(
-                Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
-                color=KeyboardButtonColor.SECONDARY
-            )
-        ).get_json()
+        kb = Keyboard(inline=True)
+        kb.add(
+            Callback("Настроить запреты", payload=json.dumps({"cmd": "sec_cats"})),
+            color=KeyboardButtonColor.SECONDARY
+        )
+        target_url = INSTRUCTION_PHOTO_URL or (INSTRUCTION_PHOTO_PATH if str(INSTRUCTION_PHOTO_PATH).startswith("http") else "")
+        if target_url:
+            kb.add(OpenLink("🖼 Открыть фото", link=target_url))
+        send_kwargs["keyboard"] = kb.get_json()
 
     if attachment:
         send_kwargs["attachment"] = attachment
@@ -88,12 +127,13 @@ async def send_bot_welcome_instruction(message: Message):
     except Exception as e:
         logger.warning(f"Ошибка отправки инструкции с вложением {attachment} в беседу {peer_id}: {e}")
 
-    # Если отправка с текущим attachment завершилась ошибкой (например, неверный ID из .env):
-    # Принудительно загружаем фото с диска именно для этой беседы peer_id
-    if INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
+    # Если отправка с текущим attachment завершилась ошибкой:
+    # Принудительно пробуем загрузить байты заново
+    data = await get_instruction_photo_data()
+    if data:
         try:
             uploader = PhotoMessageUploader(message.ctx_api)
-            fresh_att = await uploader.upload(INSTRUCTION_PHOTO_PATH, peer_id=peer_id)
+            fresh_att = await uploader.upload(data, peer_id=peer_id)
             if fresh_att and fresh_att != attachment:
                 _peer_photo_cache[peer_id] = fresh_att
                 send_kwargs["attachment"] = fresh_att

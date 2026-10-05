@@ -18,11 +18,19 @@ COMMAND_PREFIXES = tuple(p.strip() for p in raw_prefixes.split(",") if p.strip()
 raw_dev_ids = os.getenv("DEV_IDS", "")
 DEV_IDS = tuple(int(x) for x in re.findall(r"\d+", raw_dev_ids))
 
-raw_photo_path = os.getenv("INSTRUCTION_PHOTO_PATH", "assets/instruction.png")
-_p = Path(raw_photo_path)
-if not _p.is_absolute():
-    _p = (BASE_DIR / _p).resolve()
-INSTRUCTION_PHOTO_PATH = str(_p)
+INSTRUCTION_PHOTO_URL = os.getenv("INSTRUCTION_PHOTO_URL", "").strip()
+
+raw_photo_path = os.getenv("INSTRUCTION_PHOTO_PATH", "assets/instruction.png").strip()
+if raw_photo_path.startswith("http://") or raw_photo_path.startswith("https://"):
+    if not INSTRUCTION_PHOTO_URL:
+        INSTRUCTION_PHOTO_URL = raw_photo_path
+    INSTRUCTION_PHOTO_PATH = raw_photo_path
+else:
+    _p = Path(raw_photo_path)
+    if not _p.is_absolute():
+        _p = (BASE_DIR / _p).resolve()
+    INSTRUCTION_PHOTO_PATH = str(_p)
+
 INSTRUCTION_PHOTO_ATTACHMENT = os.getenv("INSTRUCTION_PHOTO_ATTACHMENT", "").strip()
 
 
