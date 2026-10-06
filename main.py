@@ -91,6 +91,9 @@ async def startup(bot: Bot):
             logger.info(f"LongPoll API для группы «{group.name}» (ID {group.id}) успешно активирован.")
     except Exception as e:
         logger.warning(f"Не удалось обновить настройки LongPoll через API: {e}")
+        if "Rate limit" in str(e) or getattr(e, "code", None) == 29:
+            logger.info("Пауза 3 секунды для сброса лимита запросов...")
+            await asyncio.sleep(3)
 
     # Проверка наличия файла фото-инструкции
     from config import INSTRUCTION_PHOTO_PATH
@@ -123,7 +126,16 @@ async def async_main():
     bot = create_bot()
     await startup(bot)
     logger.info("Бот слушает события LongPoll. Готов к приему сообщений! 🚀")
-    await bot.run_polling()
+    while True:
+        try:
+            await bot.run_polling()
+            break
+        except Exception as e:
+            if "Rate limit" in str(e) or getattr(e, "code", None) == 29:
+                logger.warning("⚠️ Достигнут лимит запросов ВКонтакте (Rate limit). Ожидаем 5 секунд перед повтором...")
+                await asyncio.sleep(5)
+            else:
+                raise
 
 
 def main():
