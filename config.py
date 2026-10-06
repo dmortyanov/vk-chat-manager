@@ -9,8 +9,8 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 
-VK_TOKEN = os.getenv("VK_TOKEN", "")
-DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "chat_manager.db"))
+VK_TOKEN = os.getenv("VK_TOKEN", "").strip()
+DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "chat_manager.db")).strip()
 
 raw_prefixes = os.getenv("COMMAND_PREFIXES", "/")
 COMMAND_PREFIXES = tuple(p.strip() for p in raw_prefixes.split(",") if p.strip()) or ("/",)
