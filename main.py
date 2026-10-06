@@ -105,16 +105,25 @@ async def async_main():
     bot = create_bot()
     await startup(bot)
     logger.info("Бот слушает события LongPoll. Готов к приему сообщений! 🚀")
-    while True:
-        try:
-            await bot.run_polling()
-            break
-        except Exception as e:
-            if "Rate limit" in str(e) or getattr(e, "code", None) == 29:
-                logger.warning("⚠️ Достигнут лимит запросов ВКонтакте (Rate limit). Ожидаем 5 секунд перед повтором...")
-                await asyncio.sleep(5)
-            else:
-                raise
+    try:
+        await bot.run_polling()
+    except Exception as e:
+        if "Rate limit" in str(e) or getattr(e, "code", None) == 29:
+            logger.error(
+                "\n" + "=" * 60 + "\n"
+                "🛑 ОШИБКА 29: Достигнут лимит запросов ВКонтакте (Rate limit reached).\n\n"
+                "Причины и решение:\n"
+                "1. На сервере уже работает старый процесс бота (дубликат).\n"
+                "   Остановите все копии: pkill -f main.py\n"
+                "2. Этот токен используется другим сервисом (например, Senler).\n"
+                "   Создайте в настройках группы ВК отдельный токен специально для бота!\n"
+                "3. Временный бан от ВК за частые перезапуски.\n"
+                "   Ожидаем 60 секунд перед завершением процесса, чтобы лимит сбросился...\n"
+                + "=" * 60
+            )
+            await asyncio.sleep(60)
+            sys.exit(1)
+        raise
 
 
 def main():
