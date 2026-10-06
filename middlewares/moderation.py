@@ -22,6 +22,7 @@ class ModerationMiddleware(BaseMiddleware[Message]):
 
     async def pre(self):
         message = self.event
+        logger.info(f"📩 Входящее сообщение [peer={message.peer_id}, from={message.from_id}]: {message.text!r}")
 
         # Проверяем, что событие происходит в групповой беседе (peer_id > 2000000000)
         if message.peer_id < 2000000000:
