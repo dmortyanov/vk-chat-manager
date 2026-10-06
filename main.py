@@ -74,27 +74,6 @@ async def startup(bot: Bot):
     await init_db()
     logger.info("База данных готова к работе.")
 
-    # Проверяем и включаем LongPoll в группе автоматически
-    try:
-        group_info = await bot.api.groups.get_by_id()
-        if group_info.groups:
-            group = group_info.groups[0]
-            await bot.api.groups.set_long_poll_settings(
-                group_id=group.id,
-                enabled=True,
-                api_version="5.199",
-                message_new=True,
-                message_reply=True,
-                message_edit=True,
-                message_event=True
-            )
-            logger.info(f"LongPoll API для группы «{group.name}» (ID {group.id}) успешно активирован.")
-    except Exception as e:
-        logger.warning(f"Не удалось обновить настройки LongPoll через API: {e}")
-        if "Rate limit" in str(e) or getattr(e, "code", None) == 29:
-            logger.info("Пауза 3 секунды для сброса лимита запросов...")
-            await asyncio.sleep(3)
-
     # Проверка наличия файла фото-инструкции
     from config import INSTRUCTION_PHOTO_PATH
     if INSTRUCTION_PHOTO_PATH and os.path.isfile(INSTRUCTION_PHOTO_PATH):
