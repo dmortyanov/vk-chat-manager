@@ -20,7 +20,7 @@ from utils.security_rules import (
 
 
 def test_rule_defaults():
-    assert len(SECURITY_RULES) == 24, f"Ожидалось 24 правила, найдено {len(SECURITY_RULES)}"
+    assert len(SECURITY_RULES) == 25, f"Ожидалось 25 правил, найдено {len(SECURITY_RULES)}"
     assert SECURITY_RULES["инвайт"].default_action == "пред"
     assert SECURITY_RULES["банворд"].default_action == "кик"
     assert SECURITY_RULES["банстикер"].default_action == "пред"
@@ -28,6 +28,7 @@ def test_rule_defaults():
     assert SECURITY_RULES["фото"].default_action == "разрешено"
     assert SECURITY_RULES["мат"].default_action == "разрешено"
     assert SECURITY_RULES["ссылка"].default_action == "разрешено"
+    assert SECURITY_RULES["символы"].default_action == "разрешено"
     print("✅ Дефолтные настройки правил ТЗ: OK")
 
 
@@ -118,6 +119,19 @@ def test_violations_detection():
     msg_clean = SimpleNamespace(text="Привет, как дела друзья?", attachments=[])
     viol = check_message_violations(msg_clean, custom_rules, banwords)
     assert viol is None
+
+    # 9. Проверка лимита символов (символы)
+    msg_long = SimpleNamespace(text="А" * 150, attachments=[])
+    # По умолчанию правило 'символы' разрешено:
+    assert check_message_violations(msg_long, {}, [], max_chars=100) is None
+    # При установке запрета 'символы: мут':
+    viol_long = check_message_violations(msg_long, {"символы": "мут"}, [], max_chars=100)
+    assert viol_long is not None
+    assert viol_long[0] == "символы" and viol_long[1] == "мут"
+    assert "150/100" in viol_long[2]
+    # Короткое сообщение не нарушает:
+    msg_short = SimpleNamespace(text="Короткий текст", attachments=[])
+    assert check_message_violations(msg_short, {"символы": "мут"}, [], max_chars=100) is None
 
     print("✅ Детекция нарушений в сообщениях: OK")
 

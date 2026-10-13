@@ -27,6 +27,7 @@ async def init_db():
             silence_mode INTEGER DEFAULT 0,
             welcome_text TEXT,
             welcome_enabled INTEGER DEFAULT 1,
+            max_message_length INTEGER DEFAULT 500,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -88,4 +89,12 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_chat_messages_peer_user ON chat_messages(peer_id, user_id, id);
         """)
         await db.commit()
+
+        # Миграция: добавляем max_message_length в chats для уже существующих БД
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN max_message_length INTEGER DEFAULT 500")
+            await db.commit()
+        except Exception:
+            pass  # Колонка уже создана
+
     logger.info("База данных SQLite успешно инициализирована.")

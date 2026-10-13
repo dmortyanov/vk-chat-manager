@@ -119,9 +119,19 @@ async def cmd_set_rule(message: Message):
         )
 
     rule_input = parts[1].strip().lower()
-    action_raw = parts[2].strip().lower()
-
     rule_name = normalize_rule_key(rule_input)
+
+    # Поддержка синтаксиса: /запрет символы 300 мут
+    extra_info = ""
+    if rule_name == "символы" and len(parts) >= 4 and parts[2].isdigit():
+        new_lim = int(parts[2])
+        if 1 <= new_lim <= 10000:
+            await Repository.set_max_message_length(message.peer_id, new_lim)
+            extra_info = f"\n📏 Лимит символов установлен на {new_lim}."
+        action_raw = parts[3].strip().lower()
+    else:
+        action_raw = parts[2].strip().lower()
+
     if not rule_name or rule_name not in SECURITY_RULES:
         return await message.reply(
             f"❌ Неизвестное правило «{rule_input}»!\n"
@@ -139,8 +149,76 @@ async def cmd_set_rule(message: Message):
     r_def = SECURITY_RULES[rule_name]
 
     await message.reply(
-        f"✅ Наказание для правила «{r_def.title}» успешно обновлено!\n"
+        f"✅ Наказание для правила «{r_def.title}» успешно обновлено!{extra_info}\n"
         f"⚙️ Текущий статус: {format_action_display(action)}"
+    )
+
+
+@labeler.message(CommandRule(["символы", "лимитсимволов", "длина", "длинасообщения", "лимит"]))
+async def cmd_char_limit(message: Message):
+    """
+    Просмотр и настройка лимита количества символов в сообщении.
+    Синтаксис:
+    - /символы — просмотр текущего лимита
+    - /символы <число> — установка лимита символов (например: /символы 300)
+    - /символы <число> <действие> — установка лимита и наказания (например: /символы 300 мут)
+    """
+    if message.peer_id < 2000000000:
+        return await message.reply("❌ Команда доступна только в беседах!")
+
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.ADMIN:
+        return
+
+    text = BOT_MENTION_REGEX.sub("", (message.text or "")).strip()
+    parts = text.split()
+    current_limit = await Repository.get_max_message_length(message.peer_id)
+    custom_rules = await Repository.get_chat_rules(message.peer_id)
+    curr_act = get_effective_rule_action("символы", custom_rules)
+
+    if len(parts) == 1:
+        return await message.reply(
+            f"📏 Настройка длины сообщений в беседе:\n\n"
+            f"▫️ Текущий лимит: {current_limit} символов\n"
+            f"▫️ Наказание за превышение: {format_action_display(curr_act)}\n\n"
+            f"💡 Чтобы изменить лимит, введите: /символы <число>\n"
+            f"Пример: /символы 300\n"
+            f"💡 Чтобы настроить наказание: /запрет символы <кик/мут/пред/бан/разрешено>\n"
+            f"Пример: /запрет символы мут"
+        )
+
+    raw_num = parts[1].strip()
+    if not raw_num.isdigit():
+        return await message.reply(
+            "❌ Укажите положительное число символов!\n"
+            "Пример: /символы 300\n"
+            "Пример: /символы 500 мут"
+        )
+
+    new_limit = int(raw_num)
+    if new_limit < 1 or new_limit > 10000:
+        return await message.reply("❌ Лимит символов должен быть в диапазоне от 1 до 10000!")
+
+    await Repository.set_max_message_length(message.peer_id, new_limit)
+
+    action_msg = ""
+    if len(parts) >= 3:
+        act_raw = parts[2].strip().lower()
+        act = normalize_action(act_raw)
+        if act and act in VALID_ACTIONS:
+            await Repository.set_chat_rule(message.peer_id, "символы", act)
+            action_msg = f"\n⚙️ Наказание установлено: {format_action_display(act)}"
+        else:
+            action_msg = f"\n⚠️ Действие «{act_raw}» не распознано. Текущее наказание: {format_action_display(curr_act)}"
+    else:
+        if curr_act == "разрешено":
+            action_msg = (
+                f"\n⚠️ Внимание: сейчас правило «символы» находится в статусе «разрешено» (выключено).\n"
+                f"Чтобы включить наказание, введите: /запрет символы мут (или пред/кик/бан)"
+            )
+
+    await message.reply(
+        f"✅ Лимит символов в сообщении успешно установлен на {new_limit}!{action_msg}"
     )
 
 

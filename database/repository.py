@@ -96,6 +96,29 @@ class Repository:
             )
             await db.commit()
 
+    @staticmethod
+    async def get_max_message_length(peer_id: int) -> int:
+        """Получает максимальную разрешенную длину сообщения для беседы (по умолчанию 500)"""
+        async with get_db() as db:
+            async with db.execute("SELECT max_message_length FROM chats WHERE peer_id = ?", (peer_id,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row["max_message_length"] is not None:
+                    return int(row["max_message_length"])
+                return 500
+
+    @staticmethod
+    async def set_max_message_length(peer_id: int, max_chars: int):
+        """Устанавливает максимальную длину сообщения для беседы"""
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO chats (peer_id, max_message_length) VALUES (?, ?)
+                ON CONFLICT(peer_id) DO UPDATE SET max_message_length = excluded.max_message_length
+                """,
+                (peer_id, max_chars)
+            )
+            await db.commit()
+
     # --- MEMBERS & ROLES ---
     @staticmethod
     async def get_or_create_member(peer_id: int, user_id: int) -> Dict[str, Any]:

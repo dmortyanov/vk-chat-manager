@@ -86,6 +86,14 @@ async def run_tests():
     assert len(cmids_empty) == 0
     print("✅ Буферизация и очистка сообщений пользователя (для кнопки 'Очистить'): OK")
 
+    # 6. Проверка лимита символов в сообщении
+    default_len = await Repository.get_max_message_length(2000000001)
+    assert default_len == 500
+    await Repository.set_max_message_length(2000000001, 250)
+    updated_len = await Repository.get_max_message_length(2000000001)
+    assert updated_len == 250
+    print("✅ Хранение и обновление лимита символов в БД: OK")
+
     # Очистка тестовой БД
     if TEST_DB_PATH.exists():
         TEST_DB_PATH.unlink()

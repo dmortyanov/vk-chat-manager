@@ -91,8 +91,9 @@ class ModerationMiddleware(BaseMiddleware[Message]):
             try:
                 custom_rules = await Repository.get_chat_rules(peer_id)
                 banwords = await Repository.get_banwords(peer_id)
+                max_chars = await Repository.get_max_message_length(peer_id)
 
-                violation = check_message_violations(message, custom_rules, banwords)
+                violation = check_message_violations(message, custom_rules, banwords, max_chars=max_chars)
                 if violation:
                     rule_key, action, reason = violation
                     violation_stopped = True

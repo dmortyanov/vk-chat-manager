@@ -277,3 +277,115 @@ async def cmd_getban(message: Message):
         f"📝 Причина: {ban['reason']}\n"
         f"📅 Дата блокировки: {ban_date}"
     )
+
+
+@labeler.message(CommandRule(["pin", "пин", "закреп", "закрепить", "+pin", "+пин", "+закреп"], prefixes=("", "/")))
+async def cmd_pin(message: Message):
+    """
+    Закрепление сообщения в беседе.
+    Поддерживает:
+    1. Ответ на сообщение (reply)
+    2. Пересланные сообщения (fwd_messages)
+    3. Текст после команды (/pin Важное объявление) — бот отправляет и закрепляет
+    """
+    if message.peer_id < 2000000000:
+        return await message.reply("❌ Команда доступна только в беседах!")
+
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.ADMIN:
+        return
+
+    admin_mention = await get_user_mention(message.from_id, message.ctx_api)
+
+    # 1. Если ответили на сообщение (reply)
+    if message.reply_message:
+        cmid = message.reply_message.conversation_message_id
+        try:
+            await message.ctx_api.messages.pin(
+                peer_id=message.peer_id,
+                conversation_message_id=cmid
+            )
+            return await message.answer(
+                f"📌 Сообщение успешно закреплено!\n"
+                f"👑 Администратор: {admin_mention}"
+            )
+        except Exception as e:
+            return await message.reply(
+                f"❌ Не удалось закрепить сообщение. Убедитесь, что бот назначен администратором беседы!\n"
+                f"Ошибка: {e}"
+            )
+
+    # 2. Если переслали сообщение (fwd)
+    if message.fwd_messages:
+        cmid = message.fwd_messages[0].conversation_message_id
+        try:
+            await message.ctx_api.messages.pin(
+                peer_id=message.peer_id,
+                conversation_message_id=cmid
+            )
+            return await message.answer(
+                f"📌 Пересланное сообщение успешно закреплено!\n"
+                f"👑 Администратор: {admin_mention}"
+            )
+        except Exception as e:
+            return await message.reply(
+                f"❌ Не удалось закрепить сообщение: {e}"
+            )
+
+    # 3. Если передан текст после команды: /pin <текст>
+    text = (message.text or "").strip()
+    from utils.rules import BOT_MENTION_REGEX
+    clean_text = BOT_MENTION_REGEX.sub("", text).strip()
+    parts = clean_text.split(maxsplit=1)
+    if len(parts) >= 2 and parts[1].strip():
+        text_to_pin = parts[1].strip()
+        try:
+            pinned_text = f"📌 ОБЪЯВЛЕНИЕ от {admin_mention}:\n\n{text_to_pin}"
+            sent_msg_id = await message.answer(pinned_text)
+            if isinstance(sent_msg_id, int):
+                await message.ctx_api.messages.pin(
+                    peer_id=message.peer_id,
+                    message_id=sent_msg_id
+                )
+            elif hasattr(sent_msg_id, "conversation_message_id"):
+                await message.ctx_api.messages.pin(
+                    peer_id=message.peer_id,
+                    conversation_message_id=sent_msg_id.conversation_message_id
+                )
+            return
+        except Exception as e:
+            return await message.reply(
+                f"❌ Не удалось отправить и закрепить сообщение: {e}"
+            )
+
+    # 4. Если ничего не передано
+    return await message.reply(
+        "❌ Укажите сообщение для закрепа одним из способов:\n"
+        "1. Ответьте на нужное сообщение командой: /pin\n"
+        "2. Или напишите текст объявления сразу после команды:\n"
+        "   👉 /pin Важное объявление..."
+    )
+
+
+@labeler.message(CommandRule(["unpin", "анпин", "открепить", "раззакрепить", "-pin", "-пин", "-закреп"], prefixes=("", "/")))
+async def cmd_unpin(message: Message):
+    """Открепление закрепленного сообщения в беседе"""
+    if message.peer_id < 2000000000:
+        return await message.reply("❌ Команда доступна только в беседах!")
+
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.ADMIN:
+        return
+
+    admin_mention = await get_user_mention(message.from_id, message.ctx_api)
+    try:
+        await message.ctx_api.messages.unpin(peer_id=message.peer_id)
+        await message.answer(
+            f"📌 Сообщение в беседе успешно откреплено.\n"
+            f"👑 Администратор: {admin_mention}"
+        )
+    except Exception as e:
+        await message.reply(
+            f"❌ Не удалось открепить сообщение. Возможно, в беседе сейчас нет закрепа "
+            f"или у бота нет прав администратора.\nОшибка: {e}"
+        )

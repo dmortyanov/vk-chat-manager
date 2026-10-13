@@ -60,6 +60,7 @@ SECURITY_RULES: Dict[str, SecurityRuleDef] = {
     "скрины": SecurityRuleDef("скрины", "💻 Скриншот", "Действия", "разрешено"),
     "закреп": SecurityRuleDef("закреп", "📌 Установка закрепа", "Действия", "разрешено"),
     "пуш": SecurityRuleDef("пуш", "📣 Упоминание пользователей", "Действия", "разрешено"),
+    "символы": SecurityRuleDef("символы", "📏 Лимит символов", "Действия", "разрешено"),
 
     # Нарушения
     "банворд": SecurityRuleDef("банворд", "🔤 Банворд в сообщении", "Нарушения", "кик"),
@@ -221,6 +222,17 @@ RULE_NAME_ALIASES = {
     "online": "пуш",
     "push": "пуш",
 
+    "символы": "символы",
+    "символ": "символы",
+    "лимитсимволов": "символы",
+    "лимит": "символы",
+    "длина": "символы",
+    "длинасообщения": "символы",
+    "максдлина": "символы",
+    "chars": "символы",
+    "maxchars": "символы",
+    "length": "символы",
+
     "банворд": "банворд",
     "банворды": "банворд",
     "banword": "банворд",
@@ -302,7 +314,8 @@ def format_rules_menu(custom_rules: Dict[str, str]) -> str:
 def check_message_violations(
     message: Any,
     custom_rules: Dict[str, str],
-    banwords: List[str]
+    banwords: List[str],
+    max_chars: int = 500
 ) -> Optional[Tuple[str, str, str]]:
     """
     Проверяет входящее сообщение на нарушения активных правил.
@@ -462,5 +475,10 @@ def check_message_violations(
             act = get_effective_rule_action("мат", custom_rules)
             if act != "разрешено":
                 return ("мат", act, "Нецензурная лексика запрещена")
+
+        # Лимит количества символов в сообщении
+        act_chars = get_effective_rule_action("символы", custom_rules)
+        if act_chars != "разрешено" and len(text) > max_chars:
+            return ("символы", act_chars, f"Превышен лимит символов ({len(text)}/{max_chars})")
 
     return None
