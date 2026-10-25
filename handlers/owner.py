@@ -16,21 +16,16 @@ labeler = BotLabeler()
 
 @labeler.message(CommandRule(["start", "старт"]))
 async def cmd_start(message: Message):
-    """Инициализация беседы и назначение главного администратора"""
+    """Инициализация беседы и назначение главного администратора (срабатывает только 1 раз)"""
     if message.peer_id < 2000000000:
         return await message.reply("❌ Команда /start должна вызываться внутри беседы ВКонтакте!")
 
     peer_id = message.peer_id
     chat = await Repository.get_chat(peer_id)
 
-    # Проверяем реального создателя беседы через VK API
-    vk_owner_id = message.from_id
-    try:
-        conv_info = await message.ctx_api.messages.get_conversations_by_id(peer_ids=[peer_id])
-        if conv_info.items and conv_info.items[0].chat_settings:
-            vk_owner_id = conv_info.items[0].chat_settings.owner_id
-    except Exception as e:
-        logger.warning(f"Не удалось получить создателя беседы через API: {e}")
+    # Если беседа уже инициализирована, бот больше не реагирует на /start
+    if chat and chat.get("owner_id"):
+        return
 
     # Инлайн-клавиатура с кнопкой 'Настроить запреты' строго под сообщением
     rules_inline_kb = (
@@ -41,24 +36,15 @@ async def cmd_start(message: Message):
         )
     ).get_json()
 
-    # Если беседа еще не была зарегистрирована или вызывающий — создатель беседы
-    if not chat or not chat.get("owner_id") or message.from_id == vk_owner_id:
-        await Repository.set_chat_owner(peer_id, message.from_id)
-        owner_mention = await get_user_mention(message.from_id, message.ctx_api)
+    await Repository.set_chat_owner(peer_id, message.from_id)
+    owner_mention = await get_user_mention(message.from_id, message.ctx_api)
 
-        return await message.answer(
-            f"🎉 Беседа успешно инициализирована!\n\n"
-            f"👑 Спец администратор: {owner_mention}\n"
-            f"🛡️ Чат-менеджер готов к работе.\n\n"
-            f"💡 Введите /команды, чтобы ознакомиться со всеми возможностями бота.\n"
-            f"⚙️ Не забудьте выдать боту права Администратора в настройках беседы!",
-            keyboard=rules_inline_kb
-        )
-
-    owner_mention = await get_user_mention(chat["owner_id"], message.ctx_api)
-    await message.reply(
-        f"ℹ️ Эта беседа уже инициализирована.\n"
-        f"👑 Спец администратор беседы: {owner_mention}",
+    return await message.answer(
+        f"🎉 Беседа успешно инициализирована!\n\n"
+        f"👑 Спец администратор: {owner_mention}\n"
+        f"🛡️ Чат-менеджер готов к работе.\n\n"
+        f"💡 Введите /команды, чтобы ознакомиться со всеми возможностями бота.\n"
+        f"⚙️ Не забудьте выдать боту права Администратора в настройках беседы!",
         keyboard=rules_inline_kb
     )
 
@@ -446,23 +432,20 @@ async def cmd_allkick(message: Message):
     if target_id == message.from_id:
         return await message.reply("❌ Вы не можете исключить самого себя!")
 
-    if message.from_id in DEV_IDS:
-        target_chats = await Repository.get_all_chat_ids()
-    else:
-        target_chats = await Repository.get_linked_chats(message.from_id)
-
-    # Гарантируем, что текущая беседа включена (только если она привязана или это текущая)
-    if message.peer_id >= 2000000000 and message.peer_id not in target_chats:
-        target_chats.append(message.peer_id)
-
-    if not target_chats or (len(target_chats) == 1 and target_chats[0] == message.peer_id):
-        # Если только текущий чат — исключаем только из него, но предупреждаем
-        pass
+    target_chats = await Repository.get_linked_chats(message.from_id)
 
     if not target_chats:
         return await message.reply(
             "❌ У вас нет связанных бесед!\n\n"
-            "💡 Используйте /связать в каждой беседе, которую хотите объединить для глобальных команд."
+            "💡 Используйте команду /связать в каждой беседе, которую хотите объединить для глобального исключения (/акик)."
+        )
+
+    # Если текущая беседа не связана
+    if message.peer_id >= 2000000000 and message.peer_id not in target_chats:
+        return await message.reply(
+            "❌ Текущая беседа не привязана к вашей сети!\n\n"
+            "💡 Напишите /связать в этой беседе, чтобы включить её в сеть.\n"
+            "📋 Список связанных бесед: /связи"
         )
 
     reason = reason.strip() or "Глобальное исключение администратором сети бесед"
@@ -474,15 +457,9 @@ async def cmd_allkick(message: Message):
     kicked_count = 0
 
     for peer_id in target_chats:
-        # Дополнительная проверка: вызывающий действительно owner в каждом чате
-        if message.from_id not in DEV_IDS:
-            chat_data = await Repository.get_chat(peer_id)
-            if not chat_data or chat_data.get("owner_id") != message.from_id:
-                continue  # Пропускаем чаты, в которых пользователь не является создателем
-
         # Проверяем, не является ли цель создателем в этом чате
         t_role = await Repository.get_member_role(peer_id, target_id)
-        if t_role >= Role.OWNER and message.from_id not in DEV_IDS:
+        if t_role >= Role.OWNER:
             continue
 
         # Пытаемся исключить (кикнуть) из чата без блокировки
