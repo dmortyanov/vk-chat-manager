@@ -44,17 +44,11 @@ class Repository:
 
     @staticmethod
     async def get_owner_chats(owner_id: int) -> List[int]:
-        """Возвращает список peer_id бесед, в которых пользователь является Спец администратором/владельцем"""
+        """Возвращает список peer_id бесед, которые пользователь явно связал через /связать"""
         async with get_db() as db:
             async with db.execute(
-                """
-                SELECT DISTINCT peer_id FROM (
-                    SELECT peer_id FROM chats WHERE owner_id = ?
-                    UNION
-                    SELECT peer_id FROM chat_members WHERE user_id = ? AND role = ?
-                ) WHERE peer_id >= 2000000000
-                """,
-                (owner_id, owner_id, Role.OWNER)
+                "SELECT peer_id FROM chat_links WHERE owner_id = ? AND peer_id >= 2000000000",
+                (owner_id,)
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [row["peer_id"] for row in rows]
@@ -475,3 +469,62 @@ class Repository:
                 (peer_id, user_id)
             )
             await db.commit()
+
+    # --- CHAT LINKS (Связывание бесед) ---
+    @staticmethod
+    async def link_chat(owner_id: int, peer_id: int) -> bool:
+        """Привязывает беседу к пользователю для глобальных операций (/акик и т.д.)"""
+        async with get_db() as db:
+            try:
+                await db.execute(
+                    "INSERT INTO chat_links (owner_id, peer_id) VALUES (?, ?)",
+                    (owner_id, peer_id)
+                )
+                await db.commit()
+                return True
+            except Exception:
+                return False  # Уже привязана
+
+    @staticmethod
+    async def unlink_chat(owner_id: int, peer_id: int) -> bool:
+        """Отвязывает беседу от пользователя"""
+        async with get_db() as db:
+            async with db.execute(
+                "DELETE FROM chat_links WHERE owner_id = ? AND peer_id = ?",
+                (owner_id, peer_id)
+            ) as cursor:
+                await db.commit()
+                return cursor.rowcount > 0
+
+    @staticmethod
+    async def get_linked_chats(owner_id: int) -> List[int]:
+        """Возвращает список всех связанных бесед пользователя"""
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT peer_id FROM chat_links WHERE owner_id = ? ORDER BY created_at ASC",
+                (owner_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row["peer_id"] for row in rows]
+
+    @staticmethod
+    async def is_chat_linked(owner_id: int, peer_id: int) -> bool:
+        """Проверяет, привязана ли беседа к данному пользователю"""
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT 1 FROM chat_links WHERE owner_id = ? AND peer_id = ?",
+                (owner_id, peer_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row is not None
+
+    @staticmethod
+    async def unlink_all_chats(owner_id: int) -> int:
+        """Отвязывает все беседы пользователя, возвращает количество"""
+        async with get_db() as db:
+            async with db.execute(
+                "DELETE FROM chat_links WHERE owner_id = ?",
+                (owner_id,)
+            ) as cursor:
+                await db.commit()
+                return cursor.rowcount

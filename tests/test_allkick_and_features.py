@@ -30,7 +30,7 @@ async def run_tests():
     assert Role.title(Role.OWNER) == "👑 Спец администратор"
     print("✅ Название роли Спец администратор: OK")
 
-    # 2. Проверка изоляции мультибесед для /акик
+    # 2. Проверка изоляции мультибесед для /акик (через систему связывания)
     # Павел (id 100) владеет беседами 2000000001 и 2000000002
     await Repository.get_or_create_chat(2000000001, owner_id=100)
     await Repository.set_chat_owner(2000000001, 100)
@@ -42,12 +42,47 @@ async def run_tests():
     await Repository.get_or_create_chat(2000000003, owner_id=200)
     await Repository.set_chat_owner(2000000003, 200)
 
+    # До явной привязки — get_owner_chats возвращает пустой список
+    pavel_chats_before = await Repository.get_owner_chats(100)
+    assert len(pavel_chats_before) == 0, f"До привязки у Павла не должно быть связанных чатов: {pavel_chats_before}"
+    print("✅ До привязки: get_owner_chats возвращает пустой список: OK")
+
+    # Явная привязка бесед через link_chat
+    assert await Repository.link_chat(100, 2000000001) == True
+    assert await Repository.link_chat(100, 2000000002) == True
+    assert await Repository.link_chat(200, 2000000003) == True
+
+    # Повторная привязка возвращает False
+    assert await Repository.link_chat(100, 2000000001) == False
+    print("✅ Повторная привязка возвращает False: OK")
+
     pavel_chats = await Repository.get_owner_chats(100)
     ivan_chats = await Repository.get_owner_chats(200)
 
     assert set(pavel_chats) == {2000000001, 2000000002}, f"Чаты Павла: {pavel_chats}"
     assert set(ivan_chats) == {2000000003}, f"Чаты Ивана: {ivan_chats}"
-    print("✅ Изоляция бесед для команды /акик (Павел не затрагивает беседы Ивана): OK")
+    print("✅ Изоляция бесед для команды /акик через /связать (Павел не затрагивает беседы Ивана): OK")
+
+    # Проверка get_linked_chats
+    linked = await Repository.get_linked_chats(100)
+    assert set(linked) == {2000000001, 2000000002}
+    print("✅ get_linked_chats: OK")
+
+    # Проверка is_chat_linked
+    assert await Repository.is_chat_linked(100, 2000000001) == True
+    assert await Repository.is_chat_linked(100, 2000000003) == False
+    assert await Repository.is_chat_linked(200, 2000000003) == True
+    print("✅ is_chat_linked: OK")
+
+    # Отвязка одной беседы
+    assert await Repository.unlink_chat(100, 2000000002) == True
+    remaining = await Repository.get_linked_chats(100)
+    assert set(remaining) == {2000000001}
+    assert await Repository.unlink_chat(100, 2000000002) == False  # уже отвязана
+    print("✅ unlink_chat: OK")
+
+    # Восстановим для дальнейших тестов
+    await Repository.link_chat(100, 2000000002)
 
     # 3. Настройка матрицы запретов в БД
     await Repository.set_chat_rule(2000000001, "ссылка", "мут")

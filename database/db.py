@@ -87,6 +87,15 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_bans_chat ON chat_bans(peer_id, user_id);
         CREATE INDEX IF NOT EXISTS idx_chat_rules ON chat_rules(peer_id);
         CREATE INDEX IF NOT EXISTS idx_chat_messages_peer_user ON chat_messages(peer_id, user_id, id);
+
+        CREATE TABLE IF NOT EXISTS chat_links (
+            owner_id INTEGER NOT NULL,
+            peer_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (owner_id, peer_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chat_links_owner ON chat_links(owner_id);
         """)
         await db.commit()
 
@@ -96,5 +105,20 @@ async def init_db():
             await db.commit()
         except Exception:
             pass  # Колонка уже создана
+
+        # Миграция: таблица chat_links для ручного связывания бесед
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS chat_links (
+                    owner_id INTEGER NOT NULL,
+                    peer_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (owner_id, peer_id)
+                )
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_chat_links_owner ON chat_links(owner_id)")
+            await db.commit()
+        except Exception:
+            pass  # Таблица уже существует
 
     logger.info("База данных SQLite успешно инициализирована.")

@@ -332,11 +332,108 @@ async def cmd_broadcast(message: Message):
     )
 
 
+@labeler.message(CommandRule(["связать", "link"]))
+async def cmd_link_chat(message: Message):
+    """
+    Привязка текущей беседы к Спец администратору для глобальных операций (/акик и т.д.).
+    Доступно только Спец администраторам (создателям) беседы.
+    """
+    if message.peer_id < 2000000000:
+        return await message.reply("❌ Команда доступна только в беседах!")
+
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.OWNER:
+        return await message.reply("❌ Только Спец администратор (создатель) беседы может связывать беседы!")
+
+    # Проверяем, что вызывающий действительно owner этой беседы в таблице chats
+    chat = await Repository.get_chat(message.peer_id)
+    if chat and chat.get("owner_id") and chat["owner_id"] != message.from_id:
+        return await message.reply("❌ Только создатель (инициализатор) беседы может связывать её с другими!")
+
+    success = await Repository.link_chat(message.from_id, message.peer_id)
+    if success:
+        linked = await Repository.get_linked_chats(message.from_id)
+        await message.answer(
+            f"🔗 Беседа успешно привязана!\n\n"
+            f"📋 Всего связанных бесед: {len(linked)}\n"
+            f"💡 Теперь глобальные команды (/акик) будут действовать в этой беседе.\n"
+            f"Для просмотра всех связей: /связи"
+        )
+    else:
+        await message.reply("ℹ️ Эта беседа уже привязана к вашему аккаунту.")
+
+
+@labeler.message(CommandRule(["отвязать", "unlink"]))
+async def cmd_unlink_chat(message: Message):
+    """
+    Отвязка текущей беседы от Спец администратора.
+    """
+    if message.peer_id < 2000000000:
+        return await message.reply("❌ Команда доступна только в беседах!")
+
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.OWNER:
+        return await message.reply("❌ Только Спец администратор может отвязывать беседы!")
+
+    success = await Repository.unlink_chat(message.from_id, message.peer_id)
+    if success:
+        linked = await Repository.get_linked_chats(message.from_id)
+        await message.answer(
+            f"🔓 Беседа успешно отвязана!\n\n"
+            f"📋 Осталось связанных бесед: {len(linked)}\n"
+            f"💡 Глобальные команды (/акик) больше не будут действовать в этой беседе."
+        )
+    else:
+        await message.reply("ℹ️ Эта беседа не привязана к вашему аккаунту.")
+
+
+@labeler.message(CommandRule(["связи", "links"]))
+async def cmd_show_links(message: Message):
+    """
+    Показывает список всех связанных бесед текущего Спец администратора.
+    """
+    if message.peer_id < 2000000000:
+        return await message.reply("❌ Команда доступна только в беседах!")
+
+    caller_role = await check_user_role(message.peer_id, message.from_id)
+    if caller_role < Role.OWNER:
+        return
+
+    linked = await Repository.get_linked_chats(message.from_id)
+    if not linked:
+        return await message.reply(
+            "📋 У вас нет связанных бесед.\n\n"
+            "💡 Используйте /связать в каждой беседе, которую хотите объединить для глобальных команд (/акик)."
+        )
+
+    lines = [f"🔗 Ваши связанные беседы ({len(linked)}):\n"]
+
+    for idx, peer_id in enumerate(linked, 1):
+        chat_title = f"Беседа #{peer_id - 2000000000}"
+        try:
+            conv_info = await message.ctx_api.messages.get_conversations_by_id(peer_ids=[peer_id])
+            if conv_info.items and conv_info.items[0].chat_settings:
+                chat_title = conv_info.items[0].chat_settings.title
+        except Exception:
+            pass
+
+        is_current = " ← текущая" if peer_id == message.peer_id else ""
+        lines.append(f"{idx}. {chat_title} (ID: {peer_id - 2000000000}){is_current}")
+
+    lines.append(
+        "\n💡 Команды:\n"
+        "• /связать — привязать текущую беседу\n"
+        "• /отвязать — отвязать текущую беседу"
+    )
+    await message.reply("\n".join(lines))
+
+
 @labeler.message(CommandRule(["акик", "allkick"]))
 async def cmd_allkick(message: Message):
     """
-    Исключение нарушителя из ВСЕХ бесед, где вызывающий является Спец администратором.
+    Исключение нарушителя из ВСЕХ связанных бесед (/связать).
     Доступно только Спец администраторам (3 ур.) и разработчикам.
+    Действует ТОЛЬКО по беседам, которые явно привязаны через /связать.
     """
     caller_role = await check_user_role(message.peer_id, message.from_id)
     if caller_role < Role.OWNER and message.from_id not in DEV_IDS:
@@ -352,24 +449,37 @@ async def cmd_allkick(message: Message):
     if message.from_id in DEV_IDS:
         target_chats = await Repository.get_all_chat_ids()
     else:
-        target_chats = await Repository.get_owner_chats(message.from_id)
+        target_chats = await Repository.get_linked_chats(message.from_id)
 
-    # Гарантируем, что текущая беседа тоже включена
+    # Гарантируем, что текущая беседа включена (только если она привязана или это текущая)
     if message.peer_id >= 2000000000 and message.peer_id not in target_chats:
         target_chats.append(message.peer_id)
 
+    if not target_chats or (len(target_chats) == 1 and target_chats[0] == message.peer_id):
+        # Если только текущий чат — исключаем только из него, но предупреждаем
+        pass
+
     if not target_chats:
-        return await message.reply("❌ У вас нет зарегистрированных под вашим управлением бесед.")
+        return await message.reply(
+            "❌ У вас нет связанных бесед!\n\n"
+            "💡 Используйте /связать в каждой беседе, которую хотите объединить для глобальных команд."
+        )
 
     reason = reason.strip() or "Глобальное исключение администратором сети бесед"
     target_mention = await get_user_mention(target_id, message.ctx_api)
     admin_mention = await get_user_mention(message.from_id, message.ctx_api)
 
-    await message.reply(f"⏳ Выполняю исключение {target_mention} из ваших бесед ({len(target_chats)})...")
+    await message.reply(f"⏳ Выполняю исключение {target_mention} из связанных бесед ({len(target_chats)})...")
 
     kicked_count = 0
 
     for peer_id in target_chats:
+        # Дополнительная проверка: вызывающий действительно owner в каждом чате
+        if message.from_id not in DEV_IDS:
+            chat_data = await Repository.get_chat(peer_id)
+            if not chat_data or chat_data.get("owner_id") != message.from_id:
+                continue  # Пропускаем чаты, в которых пользователь не является создателем
+
         # Проверяем, не является ли цель создателем в этом чате
         t_role = await Repository.get_member_role(peer_id, target_id)
         if t_role >= Role.OWNER and message.from_id not in DEV_IDS:
@@ -389,6 +499,7 @@ async def cmd_allkick(message: Message):
         f"👤 Нарушитель: {target_mention}\n"
         f"👑 Спец администратор: {admin_mention}\n"
         f"📝 Причина: {reason}\n\n"
-        f"✅ Исключен из бесед: {kicked_count} из {len(target_chats)}"
+        f"✅ Исключен из бесед: {kicked_count} из {len(target_chats)}\n"
+        f"🔗 Список связанных бесед: /связи"
     )
 
